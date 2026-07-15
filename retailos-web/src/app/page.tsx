@@ -8,6 +8,13 @@ import {
   useState,
 } from "react";
 
+type WarehouseStock = {
+  code: string;
+  name: string;
+  quantity: number;
+  sellable: boolean;
+};
+
 type Product = {
   sku: string;
   description: string;
@@ -16,6 +23,7 @@ type Product = {
   principal: number;
   exhibition: number;
   unavailable: number;
+  warehouses: WarehouseStock[];
 };
 
 type ImportMessage = {
@@ -116,16 +124,39 @@ function parseSapFile(text: string): Product[] {
     const existingProduct = productsMap.get(sku);
 
     const product: Product =
-      existingProduct ?? {
-        sku,
-        description: getValue("textobrevedearticulo"),
-        brand: getValue("textomarca"),
-        line: getValue("linea"),
-        principal: 0,
-        exhibition: 0,
-        unavailable: 0,
-      };
+  existingProduct ?? {
+    sku,
+    description: getValue("textobrevedearticulo"),
+    brand: getValue("textomarca"),
+    line: getValue("linea"),
+    principal: 0,
+    exhibition: 0,
+    unavailable: 0,
+    warehouses: [],
+  };
 
+const warehouseName =
+  getValue("denomin") ||
+  (warehouse === "0001"
+    ? "PRINCIPAL"
+    : warehouse === "0002"
+      ? "EXHIBICIÓN"
+      : "OTRO ALMACÉN");
+
+const existingWarehouse = product.warehouses.find(
+  (item) => item.code === warehouse,
+);
+
+if (existingWarehouse) {
+  existingWarehouse.quantity += quantity;
+} else {
+  product.warehouses.push({
+    code: warehouse,
+    name: warehouseName,
+    quantity,
+    sellable: warehouse === "0001" || warehouse === "0002",
+  });
+}
     if (warehouse === "0001") {
       product.principal += quantity;
     } else if (warehouse === "0002") {
@@ -144,6 +175,8 @@ function parseSapFile(text: string): Product[] {
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [selectedProduct, setSelectedProduct] =
+  useState<Product | null>(null);
   const [search, setSearch] = useState("");
   const [fileName, setFileName] = useState("");
   const [importMessage, setImportMessage] = useState<ImportMessage>({
@@ -499,9 +532,10 @@ export default function Home() {
                     <tbody className="divide-y divide-slate-100">
                       {filteredProducts.slice(0, 200).map((product) => (
                         <tr
-                          key={product.sku}
-                          className="hover:bg-slate-50"
-                        >
+  key={product.sku}
+  onClick={() => setSelectedProduct(product)}
+  className="cursor-pointer transition hover:bg-blue-50"
+>
                           <td className="px-5 py-4 font-semibold text-blue-700">
                             {product.sku}
                           </td>
@@ -552,6 +586,132 @@ export default function Home() {
           </div>
         </section>
       </div>
+      {selectedProduct && (
+  <div
+    className="fixed inset-0 z-50 flex justify-end bg-slate-950/40"
+    onClick={() => setSelectedProduct(null)}
+  >
+    <aside
+      className="h-full w-full max-w-xl overflow-y-auto bg-white shadow-2xl"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="flex items-start justify-between border-b border-slate-200 p-6">
+        <div>
+          <p className="text-sm font-semibold text-blue-600">
+            {selectedProduct.sku}
+          </p>
+
+          <h2 className="mt-1 text-2xl font-bold">
+            {selectedProduct.description}
+          </h2>
+
+          <p className="mt-2 text-sm text-slate-500">
+            {selectedProduct.brand || "Sin marca"} ·{" "}
+            {selectedProduct.line || "Sin línea"}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setSelectedProduct(null)}
+          className="rounded-lg px-3 py-2 text-xl text-slate-500 hover:bg-slate-100"
+          aria-label="Cerrar detalle"
+        >
+          ×
+        </button>
+      </div>
+
+      <div className="space-y-6 p-6">
+        <section className="grid grid-cols-3 gap-3">
+          <div className="rounded-xl bg-blue-50 p-4">
+            <p className="text-xs font-medium text-blue-700">
+              Principal
+            </p>
+            <p className="mt-2 text-2xl font-bold">
+              {selectedProduct.principal}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-amber-50 p-4">
+            <p className="text-xs font-medium text-amber-700">
+              Exhibición
+            </p>
+            <p className="mt-2 text-2xl font-bold">
+              {selectedProduct.exhibition}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-emerald-50 p-4">
+            <p className="text-xs font-medium text-emerald-700">
+              Disponible
+            </p>
+            <p className="mt-2 text-2xl font-bold">
+              {selectedProduct.principal +
+                selectedProduct.exhibition}
+            </p>
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-lg font-bold">
+            Distribución por almacén
+          </h3>
+
+          <p className="mt-1 text-sm text-slate-500">
+            Solo Principal y Exhibición están disponibles para venta.
+          </p>
+
+          <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Código</th>
+                  <th className="px-4 py-3">Almacén</th>
+                  <th className="px-4 py-3">Cantidad</th>
+                  <th className="px-4 py-3">Estado</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-slate-100">
+                {selectedProduct.warehouses
+                  .sort((a, b) => a.code.localeCompare(b.code))
+                  .map((warehouse) => (
+                    <tr key={warehouse.code}>
+                      <td className="px-4 py-3 font-semibold">
+                        {warehouse.code}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        {warehouse.name}
+                      </td>
+
+                      <td className="px-4 py-3 font-bold">
+                        {warehouse.quantity}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            warehouse.sellable
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-red-100 text-red-700"
+                          }`}
+                        >
+                          {warehouse.sellable
+                            ? "Disponible"
+                            : "No vendible"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </aside>
+  </div>
+)}
     </main>
   );
 }
