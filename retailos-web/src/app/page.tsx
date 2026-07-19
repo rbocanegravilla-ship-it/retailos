@@ -26,12 +26,25 @@ type Product = {
   warehouses: WarehouseStock[];
 };
 
+type Movement = {
+  id: string;
+  sku: string;
+  product: string;
+  origin: string;
+  destination: string;
+  quantity: number;
+  reason: string;
+  user: string;
+  createdAt: string;
+};
+
 type ImportMessage = {
   type: "success" | "error" | "idle";
   text: string;
 };
 
 const STORAGE_KEY = "retailos-products-v1";
+const MOVEMENTS_STORAGE_KEY = "retailos-movements-v1";
 
 function normalizeHeader(value: string): string {
   return value
@@ -177,13 +190,52 @@ export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] =
   useState<Product | null>(null);
+  const [movements, setMovements] = useState<Movement[]>([]);
+const [showMovementForm, setShowMovementForm] = useState(false);
+const [movementOrigin, setMovementOrigin] = useState("0001");
+const [movementDestination, setMovementDestination] = useState("0002");
+const [movementQuantity, setMovementQuantity] = useState(1);
+const [movementReason, setMovementReason] = useState("");
+const [movementError, setMovementError] = useState("");
   const [search, setSearch] = useState("");
   const [fileName, setFileName] = useState("");
   const [importMessage, setImportMessage] = useState<ImportMessage>({
     type: "idle",
     text: "",
   });
+useEffect(() => {
+  if (!selectedProduct) {
+    return;
+  }
 
+  const warehouseWithStock =
+    selectedProduct.warehouses.find(
+      (warehouse) =>
+        warehouse.code === "0001" &&
+        warehouse.quantity > 0,
+    ) ??
+    selectedProduct.warehouses.find(
+      (warehouse) => warehouse.quantity > 0,
+    );
+
+  if (!warehouseWithStock) {
+    setMovementError(
+      "Este producto no tiene stock en ningún almacén.",
+    );
+    return;
+  }
+
+  setMovementOrigin(warehouseWithStock.code);
+
+  setMovementDestination(
+    warehouseWithStock.code === "0002" ? "0001" : "0002",
+  );
+
+  setMovementQuantity(1);
+  setMovementReason("");
+  setMovementError("");
+  setShowMovementForm(false);
+}, [selectedProduct]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -195,6 +247,11 @@ export default function Home() {
       }
     } catch {
       localStorage.removeItem(STORAGE_KEY);
+      const savedMovements = localStorage.getItem(MOVEMENTS_STORAGE_KEY);
+
+if (savedMovements) {
+  setMovements(JSON.parse(savedMovements) as Movement[]);
+}
     }
   }, []);
 
@@ -295,6 +352,144 @@ export default function Home() {
       event.target.value = "";
     }
   }
+function handleRegisterMovement(): void {
+  if (!selectedProduct) {
+    return;
+  }
+
+  setMovementError("");
+
+  if (movementOrigin === movementDestination) {
+    setMovementError(
+      "El almacén de origen y destino deben ser diferentes.",
+    );
+    return;
+  }
+
+  if (!Number.isInteger(movementQuantity) || movementQuantity <= 0) {
+    setMovementError("Ingresa una cantidad válida.");
+    return;
+  }
+
+  const originWarehouse = selectedProduct.warehouses.find(
+    (warehouse) => warehouse.code === movementOrigin,
+  );
+
+  if (
+    !originWarehouse ||
+    originWarehouse.quantity < movementQuantity
+  ) {
+    setMovementError(
+      "El almacén de origen no tiene stock suficiente.",
+    );
+    return;
+  }
+
+  const warehouseNames: Record<string, string> = {
+    "0001": "PRINCIPAL",
+    "0002": "EXHIBICIÓN",
+    "0090": "OBSERVADOS",
+    "0091": "SEPARADOS",
+  };
+
+  const updatedWarehouses = selectedProduct.warehouses.map(
+    (warehouse) => ({ ...warehouse }),
+  );
+
+  const updatedOrigin = updatedWarehouses.find(
+    (warehouse) => warehouse.code === movementOrigin,
+  );
+
+  if (updatedOrigin) {
+    updatedOrigin.quantity -= movementQuantity;
+  }
+
+  const updatedDestination = updatedWarehouses.find(
+    (warehouse) => warehouse.code === movementDestination,
+  );
+
+  if (updatedDestination) {
+    updatedDestination.quantity += movementQuantity;
+  } else {
+    updatedWarehouses.push({
+      code: movementDestination,
+      name:
+        warehouseNames[movementDestination] ??
+        "ALMACÉN INTERNO",
+      quantity: movementQuantity,
+      sellable:
+        movementDestination === "0001" ||
+        movementDestination === "0002",
+    });
+  }
+
+  const principal =
+    updatedWarehouses.find((warehouse) => warehouse.code === "0001")
+      ?.quantity ?? 0;
+
+  const exhibition =
+    updatedWarehouses.find((warehouse) => warehouse.code === "0002")
+      ?.quantity ?? 0;
+
+  const unavailable = updatedWarehouses
+    .filter(
+      (warehouse) =>
+        warehouse.code !== "0001" &&
+        warehouse.code !== "0002",
+    )
+    .reduce(
+      (total, warehouse) => total + warehouse.quantity,
+      0,
+    );
+
+  const updatedProduct: Product = {
+    ...selectedProduct,
+    principal,
+    exhibition,
+    unavailable,
+    warehouses: updatedWarehouses.filter(
+      (warehouse) => warehouse.quantity > 0,
+    ),
+  };
+
+  const updatedProducts = products.map((product) =>
+    product.sku === updatedProduct.sku
+      ? updatedProduct
+      : product,
+  );
+
+  const newMovement: Movement = {
+    id: crypto.randomUUID(),
+    sku: selectedProduct.sku,
+    product: selectedProduct.description,
+    origin: movementOrigin,
+    destination: movementDestination,
+    quantity: movementQuantity,
+    reason: movementReason.trim() || "Movimiento interno",
+    user: "Ricardo Bocanegra",
+    createdAt: new Date().toISOString(),
+  };
+
+  const updatedMovements = [newMovement, ...movements];
+
+  setProducts(updatedProducts);
+  setSelectedProduct(updatedProduct);
+  setMovements(updatedMovements);
+
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(updatedProducts),
+  );
+
+  localStorage.setItem(
+    MOVEMENTS_STORAGE_KEY,
+    JSON.stringify(updatedMovements),
+  );
+
+  setMovementQuantity(1);
+  setMovementReason("");
+  setShowMovementForm(false);
+}
 
   const cards = [
     {
@@ -652,6 +847,124 @@ export default function Home() {
           </div>
         </section>
 
+<section className="rounded-xl border border-slate-200 p-4">
+  <div className="flex items-center justify-between">
+    <div>
+      <h3 className="font-bold">Movimiento interno</h3>
+
+      <p className="mt-1 text-sm text-slate-500">
+        Traslada unidades entre almacenes o estados.
+      </p>
+    </div>
+
+    <button
+      type="button"
+      onClick={() =>
+        setShowMovementForm((currentValue) => !currentValue)
+      }
+      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+    >
+      {showMovementForm ? "Cancelar" : "Registrar"}
+    </button>
+  </div>
+
+  {showMovementForm && (
+    <div className="mt-5 space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="text-sm font-medium">
+          Origen
+
+          <select
+            value={movementOrigin}
+            onChange={(event) =>
+              setMovementOrigin(event.target.value)
+            }
+            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-3"
+          >
+            {selectedProduct.warehouses.map((warehouse) => (
+              <option
+                key={warehouse.code}
+                value={warehouse.code}
+              >
+                {warehouse.code} · {warehouse.name} (
+                {warehouse.quantity})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="text-sm font-medium">
+          Destino
+
+          <select
+            value={movementDestination}
+            onChange={(event) =>
+              setMovementDestination(event.target.value)
+            }
+            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-3"
+          >
+            <option value="0001">
+              0001 · Principal
+            </option>
+
+            <option value="0002">
+              0002 · Exhibición
+            </option>
+
+            <option value="0090">
+              0090 · Observados
+            </option>
+
+            <option value="0091">
+              0091 · Separados
+            </option>
+          </select>
+        </label>
+      </div>
+
+      <label className="block text-sm font-medium">
+        Cantidad
+
+        <input
+          type="number"
+          min="1"
+          value={movementQuantity}
+          onChange={(event) =>
+            setMovementQuantity(Number(event.target.value))
+          }
+          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-3"
+        />
+      </label>
+
+      <label className="block text-sm font-medium">
+        Motivo
+
+        <textarea
+          value={movementReason}
+          onChange={(event) =>
+            setMovementReason(event.target.value)
+          }
+          placeholder="Ejemplo: Reposición de exhibición"
+          className="mt-2 min-h-24 w-full rounded-lg border border-slate-300 px-3 py-3"
+        />
+      </label>
+
+      {movementError && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+          {movementError}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={handleRegisterMovement}
+        className="w-full rounded-lg bg-emerald-600 px-4 py-3 font-semibold text-white hover:bg-emerald-700"
+      >
+        Guardar movimiento
+      </button>
+    </div>
+  )}
+</section>
         <section>
           <h3 className="text-lg font-bold">
             Distribución por almacén
